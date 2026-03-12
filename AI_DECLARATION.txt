@@ -1,0 +1,21 @@
+Declaration of AI-Assisted Tools
+
+The rowing application was developed primarily through independent research,
+design and implementation by the author. AI-based tools, specifically GitHub
+Copilot, Claude and ChatGPT, were used in a limited supporting capacity during
+development. Their usage was restricted to the following:
+
+- Code autocompletion: Accepting or adapting inline suggestions for repetitive
+  boilerplate code, such as interface definitions, styling properties and
+  standard library usage patterns.
+
+- Debugging assistance: Interpreting error messages and unexpected behaviours
+  to identify potential causes, which were subsequently verified and resolved
+  independently by the author.
+
+- Code commenting: Assisting in phrasing comments for the code to improve
+  clarity and readability.
+
+All system architecture decisions, algorithm design, data pipeline
+implementation and user interface design were conceived and implemented
+by the author.
