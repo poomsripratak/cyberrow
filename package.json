@@ -1,0 +1,26 @@
+{
+  "name": "cyberrow-flow",
+  "version": "1.0.0",
+  "description": "CyberRow Flow - Professional rowing metrics application",
+  "private": true,
+  "workspaces": [
+    "electron",
+    "renderer"
+  ],
+  "scripts": {
+    "dev": "./scripts/start-dev.sh",
+    "dev:electron": "npm run dev --workspace=electron",
+    "dev:renderer": "npm run dev --workspace=renderer",
+    "build": "npm run build --workspace=renderer && npm run build --workspace=electron",
+    "build:renderer": "npm run build --workspace=renderer",
+    "build:electron": "npm run build --workspace=electron",
+    "start": "./scripts/start-prod.sh",
+    "python:backend": "cd python && python -m backend",
+    "python:simulator": "cd python && python -m simulator"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "playwright": "^1.58.2"
+  }
+}

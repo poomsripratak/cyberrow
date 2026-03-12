@@ -1,0 +1,18 @@
+[Unit]
+Description=CyberRow Flow Application
+After=network.target graphical.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/rowproject
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=SIMULATOR=true
+Environment=SIMULATOR_PRESET=intermediate
+ExecStart=/home/pi/rowproject/scripts/start-prod.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical.target
