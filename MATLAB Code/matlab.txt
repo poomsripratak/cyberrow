@@ -1,0 +1,416 @@
+% =========================================================================
+% ROWING ERGOMETRY SENSOR DATA ANALYSIS
+% =========================================================================
+
+% --- File path to the raw sensor data text file ---
+filepath = 'C:\Users\u2258751\OneDrive - University of Warwick\Rowing Ergometry\Sensor Data\Test3.2.txt';
+
+
+% =========================================================================
+% STEP 1: READ THE TEXT FILE LINE BY LINE
+% =========================================================================
+fid = fopen(filepath, 'r');   % Open the file in read mode
+
+if fid == -1
+    error('File could not be opened');   
+end
+
+lines = {};   % Initialise an empty cell array to hold each text line
+
+while ~feof(fid)                  
+    lines{end+1, 1} = fgetl(fid); 
+end
+
+fclose(fid);   
+
+% --- Remove the first and last rows ---
+% The first and last lines are often header/footer artefacts from the
+% sensor firmware and do not contain valid data.
+if numel(lines) > 2
+    lines = lines(2:end-1);
+else
+    error('Not enough rows to remove first and last rows.');
+end
+
+n_lines = length(lines);   
+
+
+% =========================================================================
+% STEP 2: DETECT ALL VARIABLE NAMES PRESENT IN THE FILE
+% =========================================================================
+all_keys = {};   
+
+for i = 1:n_lines
+
+    line = lines{i};
+
+    if isempty(line)
+        continue   % Skip blank lines
+    end
+
+       tokens = regexp(line, '([A-Za-z_]+):([-\d.]+)', 'tokens');
+
+    for j = 1:length(tokens)
+        key = tokens{j}{1};          
+        all_keys{end+1} = key;      
+    end
+
+end
+
+% Keep only the unique names and sort alphabetically.
+% unique_keys defines the column order of the data matrix.
+unique_keys = unique(all_keys);
+
+n_cols = length(unique_keys);   
+
+
+% =========================================================================
+% STEP 3: INITIALISE THE DATA MATRIX
+% =========================================================================
+data = nan(n_lines, n_cols);
+
+
+% =========================================================================
+% STEP 4: PARSE NUMERIC VALUES INTO THE DATA MATRIX
+% =========================================================================
+for i = 1:n_lines
+
+    line = lines{i};
+
+    tokens = regexp(line, '([A-Za-z_]+):([-\d.]+)', 'tokens');
+
+    for j = 1:length(tokens)
+
+        key   = tokens{j}{1};                   
+        value = str2double(tokens{j}{2});        
+
+        col_idx = find(strcmp(unique_keys, key)); 
+
+        if ~isempty(col_idx)
+            data(i, col_idx) = value;             
+        end
+
+    end
+
+end
+
+
+% =========================================================================
+% STEP 5: CONVERT THE MATRIX TO A NAMED TABLE
+% =========================================================================
+T = array2table(data, 'VariableNames', unique_keys);
+
+disp('Data successfully converted to table');
+disp(T(1:10, :));   % Preview the first 10 rows as a sanity check
+
+
+% =========================================================================
+% STEP 6: CREATE THE TIME VECTOR
+% =========================================================================
+n  = height(data);         % Total number of samples
+fs = n / 40;               % Sampling rate (Hz) 
+dt = 1 / fs;               % Time step between samples (s)
+t  = (0:n-1)' / fs;        % Time vector: column vector from 0 to (n-1)/fs seconds
+
+
+% =========================================================================
+% STEP 7: EXTRACT INDIVIDUAL SENSOR CHANNELS INTO NAMED VARIABLES
+% =========================================================================
+% --- Left-foot force plate: force components in X, Y, Z directions ---
+if ismember('L_Fx', T.Properties.VariableNames), L_Fx = T.L_Fx; end
+if ismember('L_Fy', T.Properties.VariableNames), L_Fy = T.L_Fy; end
+if ismember('L_Fz', T.Properties.VariableNames), L_Fz = T.L_Fz; end
+
+% --- Right-foot force plate: force components ---
+if ismember('R_Fx', T.Properties.VariableNames), R_Fx = T.R_Fx; end
+if ismember('R_Fy', T.Properties.VariableNames), R_Fy = T.R_Fy; end
+if ismember('R_Fz', T.Properties.VariableNames), R_Fz = T.R_Fz; end
+
+% --- IMU (inertial measurement unit) on the rower's trunk ---
+% Roll  = rotation about the anterior–posterior axis (sideways lean)
+% Pitch = rotation about the medial–lateral axis (forward/backward lean)
+% Yaw   = rotation about the vertical axis (twisting)
+if ismember('C_Roll',  T.Properties.VariableNames), C_Roll  = T.C_Roll;  end
+if ismember('C_Pitch', T.Properties.VariableNames), C_Pitch = T.C_Pitch; end
+if ismember('C_Yaw',   T.Properties.VariableNames), C_Yaw   = T.C_Yaw;  end
+
+% --- IMU angular velocity (gyroscope) about the X-axis ---
+if ismember('C_Gx', T.Properties.VariableNames), C_Gx = T.C_Gx; end
+
+% --- Seat force sensor: total vertical load on the seat (raw units) ---
+if ismember('S_Total', T.Properties.VariableNames), S_Total = T.S_Total; end
+
+
+% =========================================================================
+% STEP 8: SAVE THE PARSED TABLE TO A CSV FILE
+% =========================================================================
+
+writetable(T, 'processed_sensor_data.csv');
+disp('Table exported to processed_sensor_data.csv');
+
+
+% =========================================================================
+% STEP 9: ASSIGN BIOMECHANICAL VARIABLES FROM IMU ANGLES
+% =========================================================================
+% C_Roll  → trunk angle in the frontal plane (left–right lean), in radians
+% C_Pitch → trunk angle in the sagittal plane (forward–backward lean)
+
+theta   = C_Roll;    % Primary stability variable: frontal-plane trunk angle
+theta_y = C_Pitch;   % Secondary: sagittal-plane trunk angle
+
+
+% =========================================================================
+% STEP 10: NET HANDLE FORCES
+% =========================================================================
+% Sum the left and right foot-plate force components to get the total
+% force applied through the handle–footplate chain in each direction.
+% X = anterior–posterior (drive direction)
+% Y = medial–lateral (side-to-side)
+% Z = vertical
+
+Fx = R_Fx + L_Fx;   % Total force in X
+Fy = R_Fy + L_Fy;   % Total force in Y
+Fz = R_Fz + L_Fz;   % Total force in Z (not used in ZMP below — seat Fz used instead)
+
+
+% =========================================================================
+% STEP 11: ZERO MOMENT POINT (ZMP) CALCULATION
+% =========================================================================
+% ZMP_x (anterior–posterior):  driven by the fore–aft handle force Fx
+% ZMP_y (medial–lateral):      driven by the side-to-side handle force Fy
+
+seat_height = 0.4;   % Vertical distance from handle attachment to seat (metres)
+epsilon     = 1e-6;  % Small number added to denominator to prevent division by zero
+
+% Convert seat load from milligrams (raw units) to Newtons
+Fz_seat = (S_Total / 1000) * 9.81;
+
+% Moment arms: force × perpendicular distance from seat to handle
+My = Fx * seat_height;   % Moment about Y-axis (from anterior–posterior force)
+Mx = Fy * seat_height;   % Moment about X-axis (from medial–lateral force)
+
+% ZMP position (metres from seat centre)
+ZMP_x = -My ./ (Fz_seat + epsilon);   % Anterior–posterior ZMP
+ZMP_y =  Mx ./ (Fz_seat + epsilon);   % Medial–lateral ZMP
+
+
+% =========================================================================
+% STEP 12: DEFINE THE BASELINE STABILITY ZONE
+% =========================================================================
+baseline_duration = 10;                      % Baseline period length (seconds)
+baseline_idx      = 1:(baseline_duration * fs); % Sample indices for the baseline
+
+% Statistics for anterior–posterior ZMP
+mu_x    = mean(ZMP_x(baseline_idx));
+sigma_x = std(ZMP_x(baseline_idx));
+
+% Statistics for medial–lateral ZMP
+mu_y    = mean(ZMP_y(baseline_idx));
+sigma_y = std(ZMP_y(baseline_idx));
+
+k = 1.96;   % Z-score for 95% confidence interval
+
+% Stability zone boundaries
+xmin = mu_x - k * sigma_x;   % Lower AP boundary
+xmax = mu_x + k * sigma_x;   % Upper AP boundary
+ymin = mu_y - k * sigma_y;   % Lower ML boundary
+ymax = mu_y + k * sigma_y;   % Upper ML boundary
+
+
+% =========================================================================
+% STEP 13: MODEL THE MAGNETIC PARTICLE BRAKE (MPB) CURRENT SIGNAL
+% =========================================================================
+baseline_current = 0.100;                       % Normal operating current (A)
+MPB_current      = baseline_current * ones(n_lines, 1);  % Initialise: all samples at baseline
+
+% --- Perturbation schedule ---
+perturb_times    = [10 30 38];   % Times (s) when perturbations are applied
+perturb_duration = 2;            % Duration of each perturbation (s)
+perturb_samples  = round(perturb_duration * fs);  % Convert duration to sample count
+
+% Set the brake current to zero during each perturbation window
+for k = 1:length(perturb_times)
+
+    start_idx = round(perturb_times(k) * fs);   % First sample of perturbation
+    end_idx   = start_idx + perturb_samples;     % Last sample of perturbation
+
+    end_idx = min(end_idx, n_lines);             % Clamp to array length
+
+    MPB_current(start_idx:end_idx) = 0;          % Drop current to zero
+
+end
+
+below = MPB_current < threshold;      % Logical: true where current is low
+edges = diff([0; below]);             % +1 at start, -1 at end of each low pulse
+
+perturb_idx = find(edges == 1);       % Indices of perturbation onsets
+
+t0 = perturb_idx;   % Shorthand for onset indices (used throughout below)
+
+fprintf('Detected perturbations at:\n')
+for i = 1:length(t0)
+    fprintf('  %.2f s\n', t(t0(i)))
+end
+
+
+% =========================================================================
+% STEP 14: METRIC 1 — PEAK ZMP DEVIATION (D_peak)
+% =========================================================================
+D_peak_x = max(abs(ZMP_x(t0(1):end) - mu_x));   % Peak AP deviation (m)
+D_peak_y = max(abs(ZMP_y(t0(1):end) - mu_y));   % Peak ML deviation (m)
+
+
+% =========================================================================
+% STEP 15: METRIC 2 — RECOVERY TIME (Trec)
+% =========================================================================
+dwell_samples = round(0.1 * fs);   % Number of consecutive samples needed to confirm recovery
+
+% --- Find first exit from stability zone ---
+exit_idx = find(~inside, 1, 'first');
+
+if isempty(exit_idx)
+    warning('ZMP never leaves stability zone');
+    Trec = 0;
+else
+
+    trecovery = NaN;   % Will hold the re-entry sample index
+
+    % Search forward from exit for a sustained re-entry
+    for i = exit_idx:n - dwell_samples
+        if all(inside(i:i + dwell_samples))
+            trecovery = i;   % Found: ZMP is stable for 0.1 s from sample i
+            break
+        end
+    end
+
+    % Compute recovery time in seconds
+    if isnan(trecovery)
+        % ZMP never returned to the stability zone — use remaining trial duration
+        Trec = t(end) - t(exit_idx);
+    else
+        Trec = t(trecovery) - t(exit_idx);
+    end
+
+end
+
+
+% =========================================================================
+% STEP 16: METRIC 3 — TRUNK OVERSHOOT (OS)
+% =========================================================================
+theta_ss  = mean(theta(baseline_idx));   % Steady-state trunk angle during baseline
+
+theta_max = max(theta(t0(1):end));       % Maximum trunk angle after perturbation onset
+
+OS = theta_max - theta_ss;              % Absolute overshoot (radians)
+
+% Normalise by the full range of trunk motion in the trial so the metric
+% is dimensionless and comparable across trials with different ROM.
+theta_ref = max(theta) - min(theta);
+OS_norm   = OS / theta_ref;
+
+
+% =========================================================================
+% STEP 17: METRIC 4 — INJECTED ENERGY (Einj)
+% =========================================================================
+r    = 0.035;    % Pulley radius (m)
+k_F  = 155.49;  % Force constant (N/A), measured experimentally
+kb   = r * k_F; % Torque constant (Nm/A)
+
+tau_MPB   = kb * MPB_current;   % Brake torque signal over the whole trial (Nm)
+theta_dot = C_Gx;               % Angular velocity from IMU gyroscope (rad/s)
+
+% Integrate power (torque × angular velocity) from perturbation onset to end
+Einj = abs(trapz(t(t0(1):end), tau_MPB(t0(1):end) .* theta_dot(t0(1):end)));
+
+Eref   = max(abs(tau_MPB)) * max(abs(theta));
+E_norm = Einj / Eref;
+
+
+% =========================================================================
+% STEP 18: NORMALISE THE FOUR METRICS
+% =========================================================================
+Dref   = k * sigma_x;   % Reference deviation = edge of the 95% stability zone (metres)
+D_norm = D_peak_x / Dref;  % Normalised peak deviation (1.0 = at edge of zone)
+
+Tref   = 2.5;              % Reference recovery time = one typical stroke period (seconds)
+T_norm = Trec / Tref;      % Normalised recovery time (1.0 = took one full stroke to recover)
+
+% OS_norm and E_norm were already normalised above.
+
+
+% =========================================================================
+% STEP 19: COMPUTE THE DPRS — DYNAMIC POSTURAL RESPONSE SCORE
+% =========================================================================
+w1 = 0.35;
+w2 = 0.35;
+w3 = 0.20;
+w4 = 0.10;
+
+DPRS = w1*D_norm + w2*T_norm + w3*OS_norm + w4*E_norm;
+
+% --- Print summary to the command window ---
+fprintf('\n--- DPRS RESULTS ---\n');
+fprintf('MPB current        = %.3f A\n',  baseline_current);
+fprintf('Peak ZMP deviation = %.4f m\n',  D_peak_x);
+fprintf('Recovery time      = %.3f s\n',  Trec);
+fprintf('Trunk overshoot    = %.4f rad\n', OS);
+fprintf('Injected energy    = %.4f J\n',  Einj);
+fprintf('DPRS               = %.3f\n',    DPRS);
+
+
+% =========================================================================
+% STEP 20: PLOTS
+% =========================================================================
+
+% --- Figure 1: Three-panel time-series overview ---
+figure
+
+% Panel 1: ZMP trajectories with stability zone boundaries
+subplot(3, 1, 1)
+hold on
+plot(t, ZMP_x, 'b')
+plot(t, ZMP_y, 'r')
+yline(xmin, 'b--', 'Label', 'AP lower')   % Lower AP stability boundary
+yline(xmax, 'b--', 'Label', 'AP upper')   % Upper AP stability boundary
+yline(ymin, 'r--', 'Label', 'ML lower')   % Lower ML stability boundary
+yline(ymax, 'r--', 'Label', 'ML upper')   % Upper ML stability boundary
+xline(t(t0(1)), 'k--', 'Label', 'Perturbation onset')
+xlabel('Time (s)')
+ylabel('ZMP (m)')
+title('Zero Moment Point vs Time')
+legend('ZMP_x (AP)', 'ZMP_y (ML)')
+
+% Panel 2: Trunk angle (frontal and sagittal planes)
+subplot(3, 1, 2)
+hold on
+plot(t, theta,   'b')   % Frontal-plane (Roll) angle
+plot(t, theta_y, 'r')   % Sagittal-plane (Pitch) angle
+xline(t(t0(1)), 'k--')
+ylabel('Trunk angle (rad)')
+title('Trunk Motion')
+legend('Frontal Plane (Roll)', 'Sagittal Plane (Pitch)')
+
+% Panel 3: MPB current signal — shows when perturbations occurred
+subplot(3, 1, 3)
+hold on
+plot(t, MPB_current, 'k')
+xline(t(t0(1)), 'k--')
+ylabel('MPB current (A)')
+xlabel('Time (s)')
+title('Perturbation Signal (MPB Current)')
+hold off
+
+% --- Figure 2: ZMP phase-plane plot ---
+% Plots the 2-D path of the ZMP over time, with the stability rectangle
+% overlaid. Ideal performance keeps the ZMP within the rectangle.
+figure
+plot(ZMP_x, ZMP_y, 'LineWidth', 1.5)
+hold on
+rectangle('Position', [xmin ymin xmax-xmin ymax-ymin], ...
+          'EdgeColor', 'r', 'LineWidth', 1.5)   % Stability zone rectangle
+xlabel('ZMP AP (m)')
+ylabel('ZMP ML (m)')
+title('ZMP Stability Region')
+axis equal
+grid on
+hold off
